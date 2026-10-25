@@ -52,7 +52,7 @@ export default function FoodPreferences() {
             moods
         );
 
-        router.push('/tabs/home');
+       router.replace('/chat/chatLand');
     } catch (error) {
         console.error('Error saving preferences:', error);
     }

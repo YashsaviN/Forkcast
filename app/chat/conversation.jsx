@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   SafeAreaView,
+  Alert,
   StyleSheet,
   Text,
   TextInput,
@@ -8,23 +9,81 @@ import {
   View,
   ScrollView,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useSQLiteContext } from 'expo-sqlite';
 
 import { colors } from '../theme/colors';
+import { getUserPrefs, updateUserCity } from '../../db/database';
+
+const API_URL = 'https://forkie.negiyashsavi.workers.dev/';
+
+function getFallbackReply(text) {
+  const lowerMessage = text.toLowerCase();
+
+  let forkieResponse = "Hmm, let me think about that!";
+
+  if (
+    lowerMessage.includes('spicy') ||
+    lowerMessage.includes('hot')
+  ) {
+    forkieResponse =
+      "Something spicy sounds good! How about a spicy chicken bowl, curry, or some spicy noodles?";
+  } else if (
+    lowerMessage.includes('comfort') ||
+    lowerMessage.includes('cozy')
+  ) {
+    forkieResponse =
+      "Sounds like you need some comfort food! I'd suggest mac and cheese, ramen, or a warm bowl of curry.";
+  } else if (
+    lowerMessage.includes('light') ||
+    lowerMessage.includes('fresh')
+  ) {
+    forkieResponse =
+      "Let's keep it fresh and light! A salad bowl, sushi, or a rice bowl with veggies could be a good choice.";
+  } else if (
+    lowerMessage.includes('filling') ||
+    lowerMessage.includes('hungry')
+  ) {
+    forkieResponse =
+      "You're looking for something filling! I'd go for a burrito bowl, burger, pasta, or a hearty rice dish.";
+  } else if (
+    lowerMessage.includes('surprise')
+  ) {
+    forkieResponse =
+      "Okay, I'll choose for you! How about trying a Korean rice bowl today?";
+  } else if (
+    lowerMessage.includes('pizza')
+  ) {
+    forkieResponse =
+      "Pizza is always a solid choice! Do you want something cheesy, spicy, or loaded with toppings?";
+  } else if (
+    lowerMessage.includes('what should i eat')
+  ) {
+    forkieResponse =
+      "Let's figure it out! Are you feeling like something comforting, spicy, fresh, or filling?";
+  }
+
+  return forkieResponse;
+}
 
 export default function Conversation() {
+  const db = useSQLiteContext();
+  const scrollRef = useRef(null);
+  const introDone = useRef(false);
+
+  const { userId } = useLocalSearchParams();
+
   const [message, setMessage] = useState('');
+  const [prefs, setPrefs] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [prefsReady, setPrefsReady] = useState(false);
+  const [awaitingCity, setAwaitingCity] = useState(false);
 
   const [messages, setMessages] = useState([
     {
       id: 1,
       sender: 'forkcast',
       text: "Hey! I'm Forkie. Let's figure out what you should eat.",
-    },
-    {
-      id: 2,
-      sender: 'forkcast',
-      text: 'What are you in the mood for?',
     },
   ]);
 
@@ -36,10 +95,80 @@ export default function Conversation() {
     'Surprise me',
   ];
 
-  const sendMessage = (text = message) => {
+  const addForkieMessage = (text, setup = false) => {
+    setMessages((previous) => [
+      ...previous,
+      { id: Date.now() + Math.random(), sender: 'forkcast', text, setup },
+    ]);
+  };
+
+  useEffect(() => {
+    if (introDone.current) return;
+    introDone.current = true;
+
+    (async () => {
+      let loaded = {};
+      try {
+        if (userId != null) loaded = await getUserPrefs(db, userId);
+      } catch (error) {
+        console.log('Could not load prefs:', error);
+      }
+
+      console.log('userId:', userId, 'prefs loaded:', loaded);
+      setPrefs(loaded);
+
+      if (loaded.city) {
+        addForkieMessage('What are you in the mood for?');
+      } else {
+        addForkieMessage('Which city are you in?', true);
+        setAwaitingCity(true);
+      }
+      setPrefsReady(true);
+    })();
+  }, []);
+
+  const sendMessage = async (text = message) => {
     const trimmedMessage = text.trim();
 
-    if (!trimmedMessage) return;
+    if (!trimmedMessage || loading) return;
+
+    if (awaitingCity) {
+      setMessages((previous) => [
+        ...previous,
+        { id: Date.now(), sender: 'user', text: trimmedMessage, setup: true },
+      ]);
+      setMessage('');
+
+      if (
+        trimmedMessage.length < 2 ||
+        trimmedMessage.length > 60 ||
+        /\d/.test(trimmedMessage)
+      ) {
+        addForkieMessage('Just the city name is fine, like Toronto or Paris.', true);
+        return;
+      }
+
+      setPrefs((previous) => ({ ...previous, city: trimmedMessage }));
+      setAwaitingCity(false);
+
+      try {
+        if (userId != null) await updateUserCity(db, userId, trimmedMessage);
+      } catch (error) {
+        console.log('Could not save city:', error);
+      }
+
+      addForkieMessage(`Got it, ${trimmedMessage}! What are you in the mood for?`, true);
+      return;
+    }
+
+    const history = messages
+      .filter((m) => !m.setup)
+      .map((m) => ({
+        role: m.sender === 'user' ? 'user' : 'assistant',
+        content: m.text,
+      }))
+      .slice(-10);
+    while (history.length && history[0].role === 'assistant') history.shift();
 
     const userMessage = {
       id: Date.now(),
@@ -49,61 +178,47 @@ export default function Conversation() {
 
     setMessages((previous) => [...previous, userMessage]);
     setMessage('');
+    setLoading(true);
 
-    let forkieResponse = "Hmm, let me think about that!";
+    let forkieResponse;
 
-    const lowerMessage = trimmedMessage.toLowerCase();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
 
-    if (
-      lowerMessage.includes('spicy') ||
-      lowerMessage.includes('hot')
-    ) {
-      forkieResponse =
-        "Something spicy sounds good! How about a spicy chicken bowl, curry, or some spicy noodles?";
-    } else if (
-      lowerMessage.includes('comfort') ||
-      lowerMessage.includes('cozy')
-    ) {
-      forkieResponse =
-        "Sounds like you need some comfort food! I'd suggest mac and cheese, ramen, or a warm bowl of curry.";
-    } else if (
-      lowerMessage.includes('light') ||
-      lowerMessage.includes('fresh')
-    ) {
-      forkieResponse =
-        "Let's keep it fresh and light! A salad bowl, sushi, or a rice bowl with veggies could be a good choice.";
-    } else if (
-      lowerMessage.includes('filling') ||
-      lowerMessage.includes('hungry')
-    ) {
-      forkieResponse =
-        "You're looking for something filling! I'd go for a burrito bowl, burger, pasta, or a hearty rice dish.";
-    } else if (
-      lowerMessage.includes('surprise')
-    ) {
-      forkieResponse =
-        "Okay, I'll choose for you! How about trying a Korean rice bowl today?";
-    } else if (
-      lowerMessage.includes('pizza')
-    ) {
-      forkieResponse =
-        "Pizza is always a solid choice! Do you want something cheesy, spicy, or loaded with toppings?";
-    } else if (
-      lowerMessage.includes('what should i eat')
-    ) {
-      forkieResponse =
-        "Let's figure it out! Are you feeling like something comforting, spicy, fresh, or filling?";
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: trimmedMessage,
+          history,
+          prefs,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server error ${res.status}: ${await res.text()}`);
+      }
+
+      const data = await res.json();
+      forkieResponse = data.reply || getFallbackReply(trimmedMessage);
+    } catch (error) {
+      console.log('Forkie API error:', error);
+      if (__DEV__) Alert.alert('Forkie API error', String(error));
+      forkieResponse = getFallbackReply(trimmedMessage);
+    } finally {
+      clearTimeout(timeoutId);
+      setLoading(false);
     }
 
-    setTimeout(() => {
-      const forkieMessage = {
-        id: Date.now() + 1,
-        sender: 'forkcast',
-        text: forkieResponse,
-      };
+    const forkieMessage = {
+      id: Date.now() + 1,
+      sender: 'forkcast',
+      text: forkieResponse,
+    };
 
-      setMessages((previous) => [...previous, forkieMessage]);
-    }, 500);
+    setMessages((previous) => [...previous, forkieMessage]);
   };
 
   return (
@@ -133,6 +248,10 @@ export default function Conversation() {
       </View>
 
       <ScrollView
+        ref={scrollRef}
+        onContentSizeChange={() =>
+          scrollRef.current?.scrollToEnd({ animated: true })
+        }
         style={styles.chat}
         contentContainerStyle={styles.chatContent}
       >
@@ -162,6 +281,15 @@ export default function Conversation() {
           </View>
         ))}
 
+        {loading && (
+          <View style={[styles.messageBubble, styles.forkcastBubble]}>
+            <Text style={[styles.messageText, styles.forkcastText]}>
+              Forkie is thinking...
+            </Text>
+          </View>
+        )}
+
+        {prefsReady && !awaitingCity && (
         <View style={styles.quickReplies}>
 
           {quickReplies.map((reply) => (
@@ -177,6 +305,7 @@ export default function Conversation() {
           ))}
 
         </View>
+        )}
 
       </ScrollView>
 
@@ -184,7 +313,7 @@ export default function Conversation() {
 
         <TextInput
           style={styles.input}
-          placeholder="Tell Forkie what you're craving..."
+          placeholder={awaitingCity ? 'Type your city...' : "Tell Forkie what you're craving..."}
           placeholderTextColor={colors.mutedText}
           value={message}
           onChangeText={setMessage}

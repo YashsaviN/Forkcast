@@ -31,7 +31,8 @@ export default function Dietary() {
         'Keto',
         'No beef',
         'only Chicken and mutton',
-        'Low-sugar'
+        'Low-sugar',
+        'None'
     ];
 
     const [selecteddietary, setSelecteddietary] = useState([]);
@@ -52,7 +53,7 @@ export default function Dietary() {
         if (!selecteddietary) return;
 
         try {
-            await updateUserDietary(db, userId, selecteddietary);
+               await updateUserDietary(db, userId, selecteddietary.join(', '));
 
             router.push({
                 pathname: '/onboarding/spice',

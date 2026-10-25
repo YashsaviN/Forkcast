@@ -16,13 +16,6 @@ export default function chatLand() {
 
       <View style={styles.container}>
 
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-
         <View style={styles.header}>
 
           <Text style={styles.logo}>FORKCAST</Text>

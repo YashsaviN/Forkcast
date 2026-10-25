@@ -14,9 +14,15 @@ export async function initializeDatabase(db) {
       favourite_foods TEXT,
       comfort_food TEXT,
       disliked_foods TEXT,
-      moods TEXT
+      moods TEXT,
+      city TEXT
     );
   `);
+
+  const columns = await db.getAllAsync('PRAGMA table_info(users);');
+  if (!columns.some((column) => column.name === 'city')) {
+    await db.execAsync('ALTER TABLE users ADD COLUMN city TEXT;');
+  }
 }
 export async function updateUserBudget(db, userId, budget) {
     await db.runAsync(
@@ -54,6 +60,15 @@ export async function updateUserSpice(db, userId, spice) {
     );
 }
 
+export async function updateUserCity(db, userId, city) {
+    await db.runAsync(
+        `UPDATE users
+         SET city = ?
+         WHERE id = ?`,
+        [city, userId]
+    );
+}
+
 export async function updateUserPreferences(
     db,
     userId,
@@ -80,4 +95,36 @@ export async function updateUserPreferences(
             userId,
         ]
     );
+}
+
+export async function getUserPrefs(db, userId) {
+    const row = await db.getFirstAsync(
+        `SELECT budget, cuisines, dietary, spice, usual_order, favourite_foods,
+                comfort_food, disliked_foods, moods, city
+         FROM users
+         WHERE id = ?`,
+        [userId]
+    );
+
+    if (!row) return {};
+
+    let moods = [];
+    try {
+        moods = JSON.parse(row.moods || '[]');
+    } catch {
+        moods = [];
+    }
+
+    return {
+        budget: row.budget,
+        cuisines: row.cuisines,
+        dietary: row.dietary,
+        spice: row.spice,
+        usualOrder: row.usual_order,
+        favouriteFoods: row.favourite_foods,
+        comfortFood: row.comfort_food,
+        dislikedFoods: row.disliked_foods,
+        moods,
+        city: row.city,
+    };
 }
